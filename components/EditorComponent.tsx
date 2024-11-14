@@ -26,6 +26,14 @@ export default function EditorComponent() {
   const [loading, setLoading] = useState(false);
   const [output, setOutput] = useState([]);
   const [err, setErr] = useState(false);
+  const [userInput, setUserInput] = useState("");
+  const [consoleOutput, setConsoleOutput] = useState<string[]>([]);
+  const [isWaitingForInput, setIsWaitingForInput] = useState(false);
+  const consoleInputRef = useRef<HTMLInputElement>(null);
+  const [inputBuffer, setInputBuffer] = useState<string[]>([]);
+  const [currentInputIndex, setCurrentInputIndex] = useState(0);
+  const [originalCode, setOriginalCode] = useState("");
+  const [executionStep, setExecutionStep] = useState(0);
   // const language = languageOption.language;
   // console.log(language);
   const editorRef = useRef(null);
@@ -44,8 +52,93 @@ export default function EditorComponent() {
     setSourceCode(codeSnippets[value.language]);
   }
 
+  function processOutput(output: string, isFirstExecution: boolean = false) {
+    const lines = output.split('\n');
+    let newConsoleOutput: string[] = [];
+
+    if (!isFirstExecution) {
+      newConsoleOutput = [...consoleOutput];
+    }
+
+    // Find the next cin position in output
+    let showUntilIndex = lines.length;
+    for (let i = 0; i < lines.length; i++) {
+      // Look for compilation errors
+      if (lines[i].includes("error:")) {
+        showUntilIndex = lines.length; // Show all lines if there's an error
+        break;
+      }
+      // Look for input prompt
+      if (lines[i].includes("Enter") && i < lines.length - 1) {
+        showUntilIndex = i + 1;
+        break;
+      }
+    }
+
+    // Add lines until the next input prompt
+    for (let i = 0; i < showUntilIndex; i++) {
+      if (lines[i].trim()) {
+        newConsoleOutput.push(lines[i]);
+      }
+    }
+
+    setConsoleOutput(newConsoleOutput);
+    // Set waiting for input if we found an input prompt
+    setIsWaitingForInput(lines.some(line => line.includes("Enter")));
+  }
+
+  async function handleConsoleInput(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' && consoleInputRef.current) {
+      const input = consoleInputRef.current.value;
+
+      // Add input to console with proper formatting
+      setConsoleOutput(prev => [...prev, input]);
+
+      const newInputBuffer = [...inputBuffer, input];
+      setInputBuffer(newInputBuffer);
+
+      const newRequestData = {
+        language: languageOption.language,
+        version: languageOption.version,
+        files: [
+          {
+            content: sourceCode,
+          },
+        ],
+        stdin: newInputBuffer.join('\n'),
+        compile_timeout: 10000,
+        run_timeout: 3000,
+        compile_memory_limit: -1,
+        run_memory_limit: -1
+      };
+
+      try {
+        const result = await compileCode(newRequestData);
+        if (result.run && result.run.output) {
+          processOutput(result.run.output);
+        } else if (result.compile && result.compile.output) {
+          // Handle compilation errors
+          setConsoleOutput([result.compile.output]);
+          setIsWaitingForInput(false);
+        }
+      } catch (error) {
+        setErr(true);
+        console.error(error);
+        setConsoleOutput(prev => [...prev, "Error executing code"]);
+        setIsWaitingForInput(false);
+      }
+
+      consoleInputRef.current.value = '';
+    }
+  }
+
   async function executeCode() {
     setLoading(true);
+    setConsoleOutput([]);
+    setInputBuffer([]);
+    setCurrentInputIndex(0);
+    setErr(false);
+
     const requestData = {
       language: languageOption.language,
       version: languageOption.version,
@@ -54,21 +147,33 @@ export default function EditorComponent() {
           content: sourceCode,
         },
       ],
+      stdin: "",
+      compile_timeout: 10000,
+      run_timeout: 3000,
+      compile_memory_limit: -1,
+      run_memory_limit: -1
     };
+
     try {
       const result = await compileCode(requestData);
-      setOutput(result.run.output.split("\n"));
-      console.log(result);
+      if (result.run && result.run.output) {
+        processOutput(result.run.output, true);
+        setErr(false);
+      } else if (result.compile && result.compile.output) {
+        // Handle compilation errors
+        setConsoleOutput([result.compile.output]);
+        setIsWaitingForInput(false);
+        setErr(true);
+      }
       setLoading(false);
-      setErr(false);
-      toast.success("Compiled Successfully");
     } catch (error) {
       setErr(true);
       setLoading(false);
-      toast.error("Failed to compile the Code");
-      console.log(error);
+      setConsoleOutput(["Error executing code"]);
+      console.error(error);
     }
   }
+
   // console.log(languageOption);
   return (
     <div className="min-h-screen dark:bg-slate-900 rounded-2xl shadow-2xl py-6 px-8">
@@ -110,45 +215,47 @@ export default function EditorComponent() {
             {/* Header */}
             <div className="space-y-3 bg-slate-300 dark:bg-slate-900 min-h-screen">
               <div className="flex items-center justify-between  bg-slate-400 dark:bg-slate-950 px-6 py-2">
-                <h2>Output</h2>
-                {loading ? (
-                  <Button
-                    disabled
-                    size={"sm"}
-                    className="dark:bg-purple-600 dark:hover:bg-purple-700 text-slate-100 bg-slate-800 hover:bg-slate-900"
-                  >
-                    <Loader className="w-4 h-4 mr-2 animate-spin" />
-                    <span>Running please wait...</span>
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={executeCode}
-                    size={"sm"}
-                    className="dark:bg-purple-600 dark:hover:bg-purple-700 text-slate-100 bg-slate-800 hover:bg-slate-900"
-                  >
-                    <Play className="w-4 h-4 mr-2 " />
-                    <span>Run</span>
-                  </Button>
-                )}
+                <h2>Console</h2>
+                <Button
+                  onClick={executeCode}
+                  size={"sm"}
+                  disabled={loading}
+                  className="dark:bg-purple-600 dark:hover:bg-purple-700 text-slate-100 bg-slate-800 hover:bg-slate-900"
+                >
+                  {loading ? (
+                    <>
+                      <Loader className="w-4 h-4 mr-2 animate-spin" />
+                      <span>Running...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 mr-2" />
+                      <span>Run</span>
+                    </>
+                  )}
+                </Button>
               </div>
-              <div className=" px-6 space-y-2">
-                {err ? (
-                  <div className="flex items-center space-x-2 text-red-500 border border-red-600 px-6 py-6">
-                    <TriangleAlert className="w-5 h-5 mr-2 flex-shrink-0" />
-                    <p className="text-xs">
-                      Failed to Compile the Code , Please try again !
-                    </p>
+
+              <div className="px-6 space-y-2 font-mono text-sm h-[calc(100vh-200px)] overflow-y-auto">
+                {/* Console Output */}
+                {consoleOutput.map((line, index) => (
+                  <div key={index} className="whitespace-pre-wrap">
+                    {line}
                   </div>
-                ) : (
-                  <>
-                    {output.map((item) => {
-                      return (
-                        <p className="text-sm" key={item}>
-                          {item}
-                        </p>
-                      );
-                    })}
-                  </>
+                ))}
+
+                {/* Interactive Input Line */}
+                {isWaitingForInput && (
+                  <div className="flex items-center">
+                    <span className="text-green-500 mr-2">{'>'}</span>
+                    <input
+                      ref={consoleInputRef}
+                      type="text"
+                      className="flex-1 bg-transparent border-none outline-none"
+                      onKeyDown={handleConsoleInput}
+                      autoFocus
+                    />
+                  </div>
                 )}
               </div>
             </div>

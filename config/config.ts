@@ -109,11 +109,22 @@ class MainClass
     }
 }`, // Output: 7
 
-  "c++": `int sum(int a, int b) {
+  "c++": `#include <iostream>
+using namespace std;
+
+int sum(int a, int b) {
   return a + b;
 }
+
 int main() {
-  std::cout << sum(3, 4);
+  int num1=0, num2=0;
+  cout << "Enter first number: ";
+  cin >> num1;
+  cout <<num1<<endl;
+  cout << "Enter second number: ";
+  cin >> num2;
+  cout <<num2<<endl;
+  cout << "Sum is: " << sum(num1, num2) << endl;
   return 0;
 }`, // Output: 7
 
